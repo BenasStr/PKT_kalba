@@ -9,6 +9,12 @@ import os
 import math
 
 #######################################
+#  THE WATCHER
+#######################################
+
+TheVariableBeingWatched = None
+
+#######################################
 # CONSTANTS
 #######################################
 
@@ -121,6 +127,7 @@ TT_COMMA			= 'COMMA'
 TT_ARROW			= 'ARROW'
 TT_NEWLINE		= 'NEWLINE'
 TT_EOF				= 'EOF'
+TT_WATCH      = 'WATCH'
 
 KEYWORDS = [
   'var',
@@ -140,6 +147,7 @@ KEYWORDS = [
   'return',
   'continue',
   'break',
+  'WATCH',
 ]
 
 class Token:
@@ -184,7 +192,7 @@ class Lexer:
     while self.current_char != None:
       if self.current_char in ' \t':
         self.advance()
-      elif self.current_char == '#':
+      elif self.current_char == '@':
         self.skip_comment()
       elif self.current_char in ';\n':
         tokens.append(Token(TT_NEWLINE, pos_start=self.pos))
@@ -193,6 +201,14 @@ class Lexer:
         pos_start = self.pos.copy()
         char = self.current_char
         value, num_string = self.make_number()
+        if(value == "Error"):
+            pos_end = self.pos.copy()
+            return [], IllegalCharError(pos_start, pos_end, "'" + num_string + "'")
+        tokens.append(value)
+      elif self.current_char == '#':
+        pos_start = self.pos.copy()
+        char = self.current_char
+        value, num_string = self.make_watch()
         if(value == "Error"):
             pos_end = self.pos.copy()
             return [], IllegalCharError(pos_start, pos_end, "'" + num_string + "'")
@@ -248,6 +264,23 @@ class Lexer:
 
     tokens.append(Token(TT_EOF, pos_start=self.pos))
     return tokens, None
+
+  def make_watch(self):
+    name = ""
+    self.advance()
+    pos_start = self.pos.copy()
+
+    while self.current_char != None and self.current_char in LETTERS:
+      name = name + self.current_char
+      self.advance()
+    
+    if name == TT_WATCH:
+      # pavyko
+      return Token(TT_WATCH, name, pos_start, self.pos), name
+    else:
+      # error
+      return "Error", name
+
 
   def make_number(self):
     num_str = ''
@@ -456,6 +489,7 @@ class ForNode:
     self.pos_start = self.var_name_tok.pos_start
     self.pos_end = self.body_node.pos_end
 
+
 class WhileNode:
   def __init__(self, condition_node, body_node, should_return_null):
     self.condition_node = condition_node
@@ -509,6 +543,13 @@ class BreakNode:
   def __init__(self, pos_start, pos_end):
     self.pos_start = pos_start
     self.pos_end = pos_end
+
+class WatchNode:
+  def __init__(self,count, tok):
+    self.tok = tok
+    self.count = count
+    self.pos_start = self.tok.pos_start
+    self.pos_end = self.tok.pos_end
 
 #######################################
 # PARSE RESULT
@@ -644,15 +685,29 @@ class Parser:
       return res.success(BreakNode(pos_start, self.current_tok.pos_start.copy()))
 
     expr = res.register(self.expr())
+
     if res.error:
       return res.failure(InvalidSyntaxError(
         self.current_tok.pos_start, self.current_tok.pos_end,
         "Expected 'reuturn', 'continue', 'break', 'var', 'if', 'for', 'while', 'func', int, identifier, '+', '-', '(', '[' or 'not'"
       ))
     return res.success(expr)
+  
 
   def expr(self):
     res = ParseResult()
+
+    if self.current_tok.type == 'WATCH':
+      res.register_advancement()
+      self.advance()
+      if self.current_tok.type != TT_IDENTIFIER:
+        return res.failure(InvalidSyntaxError(
+        self.current_tok.pos_start, self.current_tok.pos_end,
+        "Expected identifier"))
+      global TheVariableBeingWatched
+      TheVariableBeingWatched = WatchNode(0 ,self.current_tok)
+      expr = res.register(self.expr())
+      return res.success(WatchNode(0 ,self.current_tok))
 
     if self.current_tok.matches(TT_KEYWORD, 'var'):
       res.register_advancement()
@@ -1915,6 +1970,11 @@ class Interpreter:
 
   ###################################
 
+  def visit_WatchNode(self, node,context):
+    return RTResult().success(
+      Number(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
+    )
+
   def visit_NumberNode(self, node, context):
     return RTResult().success(
       Number(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
@@ -2154,6 +2214,7 @@ class Interpreter:
   def visit_BreakNode(self, node, context):
     return RTResult().success_break()
 
+
 #######################################
 # RUN
 #######################################
@@ -2174,12 +2235,15 @@ def run(fn, text):
   lexer = Lexer(fn, text)
   tokens, error = lexer.make_tokens()
   if error: return None, error
-  
+
   # Generate AST
   parser = Parser(tokens)
   ast = parser.parse()
   if ast.error: return None, ast.error
 
+
+  # print(TheVariableBeingWatched.tok.value)
+  
   # Run program
   interpreter = Interpreter()
   context = Context('<program>')
