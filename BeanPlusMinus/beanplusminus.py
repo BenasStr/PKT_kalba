@@ -128,7 +128,7 @@ TT_ARROW			= 'ARROW'
 TT_NEWLINE		= 'NEWLINE'
 TT_EOF				= 'EOF'
 TT_WATCH      = 'WATCH'
-
+TT_UNWATCH      = 'UNWATCH'
 KEYWORDS = [
   'var',
   'and',
@@ -148,6 +148,7 @@ KEYWORDS = [
   'continue',
   'break',
   'WATCH',
+  'UNWATCH',
 ]
 
 class Token:
@@ -277,6 +278,9 @@ class Lexer:
     if name == TT_WATCH:
       # pavyko
       return Token(TT_WATCH, name, pos_start, self.pos), name
+    elif name == TT_UNWATCH:
+      # pavyko
+      return Token(TT_UNWATCH, name, pos_start, self.pos), name
     else:
       # error
       return "Error", name
@@ -552,6 +556,13 @@ class WatchNode:
     self.pos_start = self.tok.pos_start
     self.pos_end = self.tok.pos_end
 
+class UnWatchNode:
+  def __init__(self,count, tok,initialized):
+    self.tok = tok
+    self.count = count
+    self.init = initialized
+    self.pos_start = self.tok.pos_start
+    self.pos_end = self.tok.pos_end
 #######################################
 # PARSE RESULT
 #######################################
@@ -709,6 +720,11 @@ class Parser:
       TheVariableBeingWatched = WatchNode(0 ,self.current_tok,0)
       expr = res.register(self.expr())
       return res.success(WatchNode(0 ,self.current_tok,0))
+
+    if self.current_tok.type == 'UNWATCH':
+      res.register_advancement()
+      self.advance()
+      return res.success(UnWatchNode(0 ,self.current_tok,0))
 
     if self.current_tok.matches(TT_KEYWORD, 'var'):
       res.register_advancement()
@@ -1970,14 +1986,16 @@ class Interpreter:
     raise Exception(f'No visit_{type(node).__name__} method defined')
 
   ###################################
-
+  def visit_UnWatchNode(self, node,context):
+    TheVariableBeingWatched.init = 0
+    return RTResult().success(
+      Number(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
+    )
   def visit_WatchNode(self, node,context):
-    
     TheVariableBeingWatched.init = 1
     return RTResult().success(
       Number(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
     )
-
   def visit_NumberNode(self, node, context):
     return RTResult().success(
       Number(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end)
@@ -2019,10 +2037,10 @@ class Interpreter:
     res = RTResult()
     var_name = node.var_name_tok.value
     value = res.register(self.visit(node.value_node, context))
-    
-    if(var_name == TheVariableBeingWatched.tok.value and TheVariableBeingWatched.init == 1):
-      TheVariableBeingWatched.count = TheVariableBeingWatched.count + 1
-      print(TheVariableBeingWatched.count, " ", var_name, " - has a new value - ", value)
+    if(TheVariableBeingWatched != None):
+      if(var_name == TheVariableBeingWatched.tok.value and TheVariableBeingWatched.init == 1):
+        TheVariableBeingWatched.count = TheVariableBeingWatched.count + 1
+        print(TheVariableBeingWatched.count, " ", var_name, " - has a new value - ", value)
 
     if res.should_return(): return res
 
